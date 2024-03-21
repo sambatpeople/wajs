@@ -100,7 +100,8 @@ Pull requests are welcome! If you see something you'd like to add, please do. Fo
 You can support the maintainer of this project through the links below
 
 - [Support via PayPal](https://www.paypal.me/CakHaho)
-- [Sipport via Saweria](https://saweria.co/DikaArdnt)
+- [Support via Saweria](https://saweria.co/DikaArdnt)
+- [Support via Trakteer](https://trakteer.id/cakhaho)
 
 ## Disclaimer
 

@@ -65,6 +65,7 @@ const { GroupNotification, Message, ClientInfo, Call, MessageMedia, Location, Po
  * @fires Client#message_create
  * @fires Client#message_revoke_me
  * @fires Client#message_revoke_everyone
+ * @fires Client#message_ciphertext
  * @fires Client#media_uploaded
  * @fires Client#group_join
  * @fires Client#group_leave
@@ -81,7 +82,13 @@ class Client extends EventEmitter {
 
         this.options &#x3D; Util.mergeDefault(DefaultOptions, options);
 
+        /**
+         * @type {import(&#x27;playwright&#x27;).Browser}
+         */
         this.playBrowser &#x3D; null;
+        /**
+         * @type {import(&#x27;playwright&#x27;).Page}
+         */
         this.playPage &#x3D; null;
     }
 
@@ -224,9 +231,9 @@ class Client extends EventEmitter {
                 /** @type {GroupNotification} object does not provide enough information about this event, so a @type {Message} object is used. */
                 const message &#x3D; new Message(this, msg);
 
-                const newId &#x3D; isParticipant ? msg.recipients[0] : msg.to;
-                const oldId &#x3D; isParticipant ? msg.author : msg.templateParams.find(id &#x3D;&gt; id !&#x3D;&#x3D; newId);
-
+                const newId &#x3D; isParticipant ? msg.recipients[0]?._serialized || msg.recipients[0] : msg.to?._serialized || msg.to;
+                const oldId &#x3D; isParticipant ? msg.author?._serialized || msg.author : msg.templateParams.find(id &#x3D;&gt; id !&#x3D;&#x3D; newId);
+  
                 /**
                  * Emitted when a contact or a group participant changes their phone number.
                  * @event Client#contact_changed
@@ -392,7 +399,7 @@ class Client extends EventEmitter {
             await this.playPage.evaluate(({ CODE_RECEIVED, pairingNumber }) &#x3D;&gt; {
                 window.WPP.on(&#x27;conn.auth_code_change&#x27;, async (auth) &#x3D;&gt; {
                     if (pairingNumber) {
-                        const code &#x3D; await window.WPP.conn.genLinkDeviceCodeForPhoneNumber(pairingNumber, true);
+                        const code &#x3D; await window.WPP.conn.genLinkDeviceCodeForPhoneNumber(pairingNumber);
                         window.EmitEvent(CODE_RECEIVED, code);
                     } else {
                         window.qrChanged(auth.fullCode + &#x27;,1&#x27;);
@@ -439,6 +446,7 @@ class Client extends EventEmitter {
                     if (msg.type &#x3D;&#x3D;&#x3D; &#x27;ciphertext&#x27;) {
                         // defer message event until ciphertext is resolved (type changed)
                         msg.once(&#x27;change:type&#x27;, (_msg) &#x3D;&gt; window.onAddMessageEvent(window.WAJS.getMessageModel(_msg)));
+                        window.EmitEvent(Events.MESSAGE_CIPHERTEXT, window.WWebJS.getMessageModel(msg));
                     } else {
                         window.onAddMessageEvent(window.WAJS.getMessageModel(msg));
                     }
@@ -460,8 +468,10 @@ class Client extends EventEmitter {
          * Current connection information
          * @type {ClientInfo}
          */
-        this.info &#x3D; new ClientInfo(this, await page.evaluate(() &#x3D;&gt; {
-            return { ...window.WPP.whatsapp.Conn.serialize(), wid: window.WPP.whatsapp.UserPrefs.getMeUser() };
+        this.info &#x3D; new ClientInfo(this, await page.evaluate(async () &#x3D;&gt; {
+            const pushname &#x3D; await window.WPP.whatsapp.functions.getPushname();
+            const platform &#x3D; window.WPP.conn.getPlatform();
+            return { pushname, platform, wid: window.WPP.whatsapp.UserPrefs.getMeUser() };
         }));
 
         // Add InterfaceController
@@ -502,15 +512,27 @@ class Client extends EventEmitter {
     /**
      * Mark as seen for the Chat
      *  @param {string} chatId
+     *  @param {string} msgId 
      *  @returns {Promise&amp;lt;boolean&gt;} result
      * 
      */
-    async sendSeen(chatId) {
-        const result &#x3D; await this.playPage.evaluate(async (chatId) &#x3D;&gt; {
+    async sendSeen(chatId, msgId) {
+        if (msgId &amp;amp;&amp;amp; !msgId.includes(&#x27;status@broadcast&#x27;)) throw &#x27;use the message id from status&#x27;;
+        if (msgId &amp;amp;&amp;amp; !msgId.includes(chatId)) throw &#x27;chatId has no match in msgId&#x27;;
+
+        const result &#x3D; await this.playPage.evaluate(async ({ chatId, msgId }) &#x3D;&gt; {
+            if (msgId) return window.WPP.status.sendReadStatus(chatId, msgId);
             return await window.WPP.chat.markIsRead(chatId);
-        }, chatId);
+        }, { chatId, msgId });
         return result;
     }
+
+    /**
+     * An object representing mentions of groups
+     * @typedef {Object} GroupMention
+     * @property {string} subject - The name of a group to mention (can be custom)
+     * @property {string} id - The group ID, e.g.: &#x27;XXXXXXXXXX@g.us&#x27;
+     */
 
     /**
      * Message options.
@@ -524,7 +546,8 @@ class Client extends EventEmitter {
      * @property {boolean} [parseVCards&#x3D;true] - Automatically parse vCards and send them as contacts
      * @property {string} [caption] - Image or video caption
      * @property {string} [quotedMessageId] - Id of the message that is being quoted (or replied to)
-     * @property {Contact[]} [mentions] - Contacts that are being mentioned in the message
+     * @property {GroupMention[]} [groupMentions] - An array of object that handle group mentions
+     * @property {string[]} [mentions] - User IDs to mention in the message
      * @property {boolean} [sendSeen&#x3D;true] - Mark the conversation as seen after sending the message
      * @property {string} [stickerAuthor&#x3D;undefined] - Sets the author of the sticker, (if sendMediaAsSticker is true).
      * @property {string} [stickerName&#x3D;undefined] - Sets the name of the sticker, (if sendMediaAsSticker is true).
@@ -542,6 +565,13 @@ class Client extends EventEmitter {
      * @returns {Promise&amp;lt;Message&gt;} Message that was just sent
      */
     async sendMessage(chatId, content, options &#x3D; {}) {
+        if (options.mentions) {
+            !Array.isArray(options.mentions) &amp;amp;&amp;amp; (options.mentions &#x3D; [options.mentions]);
+            options.mentions &#x3D; options.mentions.map((a) &#x3D;&gt; typeof a &#x3D;&#x3D;&#x3D; &#x27;object&#x27; ? a.id._serialized : a);
+        }
+
+        options.groupMentions &amp;amp;&amp;amp; !Array.isArray(options.groupMentions) &amp;amp;&amp;amp; (options.groupMentions &#x3D; [options.groupMentions]);
+
         let internalOptions &#x3D; {
             linkPreview: options.linkPreview &#x3D;&#x3D;&#x3D; false ? undefined : true,
             sendAudioAsVoice: options.sendAudioAsVoice,
@@ -551,8 +581,10 @@ class Client extends EventEmitter {
             caption: options.caption,
             quotedMessageId: options.quotedMessageId,
             parseVCards: options.parseVCards &#x3D;&#x3D;&#x3D; false ? false : true,
-            mentionedJidList: Array.isArray(options.mentions) ? options.mentions.map(v &#x3D;&gt; typeof v &#x3D;&#x3D;&#x3D; &#x27;object&#x27; ? v.id._serialized : v) : [],
-            extraOptions: options.extra
+            mentionedJidList: options.mentions || [],
+            groupMentions: options.groupMentions,
+            extraOptions: options.extra,
+            messageId: options.messageId
         };
 
         const sendSeen &#x3D; typeof options.sendSeen &#x3D;&#x3D;&#x3D; &#x27;undefined&#x27; ? true : options.sendSeen;
@@ -592,16 +624,31 @@ class Client extends EventEmitter {
         }
 
         const newMessage &#x3D; await this.playPage.evaluate(async ({ chatId, message, options, sendSeen }) &#x3D;&gt; {
-            const chatWid &#x3D; window.WPP.whatsapp.WidFactory.createWid(chatId);
-            const chat &#x3D; await window.WPP.whatsapp.ChatStore.find(chatWid);
+            if (chatId &#x3D;&#x3D;&#x3D; &#x27;status@broadcast&#x27;) {
+                if (typeof message &#x3D;&#x3D;&#x3D; &#x27;string&#x27;) {
+                    const result &#x3D; await window.WPP.status.sendTextStatus(message, options);
+                    return await (await window.WPP.whatsapp.MsgStore.get(result.id)).serialize();
+                } else if (/image/.test(message.mimetype)) {
+                    const result &#x3D; await window.WPP.status.sendImageStatus(&#x60;data:${message.mimetype};base64,${message.data}&#x60;, options);
+                    return await (await window.WPP.whatsapp.MsgStore.get(result.id)).serialize();
+                } else if (/video/.test(message.mimetype)) {
+                    const result &#x3D; await window.WPP.status.sendVideoStatus(&#x60;data:${message.mimetype};base64,${message.data}&#x60;, options);
+                    return await (await window.WPP.whatsapp.MsgStore.get(result.id)).serialize();
+                } else {
+                    throw new Error(&#x27;Invalid type for status broadcast&#x27;);
+                }
+            } else {
+                const chatWid &#x3D; window.WPP.whatsapp.WidFactory.createWid(chatId);
+                const chat &#x3D; await window.WPP.whatsapp.ChatStore.find(chatWid);
 
 
-            if (sendSeen) {
-                await window.WPP.whatsapp.functions.sendSeen(chat, false);
+                if (sendSeen) {
+                    await window.WPP.whatsapp.functions.sendSeen(chat, false);
+                }
+
+                const msg &#x3D; await window.WAJS.sendMessage(chat, message, options, sendSeen);
+                return msg.serialize();
             }
-
-            const msg &#x3D; await window.WAJS.sendMessage(chat, message, options, sendSeen);
-            return msg.serialize();
         }, { chatId, message: content, options: internalOptions, sendSeen });
 
         return new Message(this, newMessage);
@@ -1030,19 +1077,15 @@ class Client extends EventEmitter {
                 const statusCode &#x3D; participant.error ?? 200;
 
                 if (autoSendInviteV4 &amp;amp;&amp;amp; statusCode &#x3D;&#x3D;&#x3D; 403) {
-                    window.WPP.whatsapp.ContactStore.gadd(participant.wid, { silent: true });
-                    const addParticipantResult &#x3D; await window.Store.GroupInviteV4.sendGroupInviteMessage(
-                        await window.WPP.whatsapp.ChatStore.find(participant.wid),
-                        createGroupResult.wid._serialized,
-                        createGroupResult.subject,
-                        participant.invite_code,
-                        participant.invite_code_exp,
-                        comment,
-                        await window.WAJS.getProfilePicThumbToBase64(createGroupResult.wid._serialized)
-                    );
-                    isInviteV4Sent &#x3D; window.WAJS.compareWwebVersions(window.Debug.VERSION, &#x27;&amp;lt;&#x27;, &#x27;2.2335.6&#x27;)
-                        ? addParticipantResult &#x3D;&#x3D;&#x3D; &#x27;OK&#x27;
-                        : addParticipantResult.messageSendResult &#x3D;&#x3D;&#x3D; &#x27;OK&#x27;;
+                    setTimeout(async () &#x3D;&gt; {
+                        await window.WPP.chat.sendGroupInviteMessage(participantId, {
+                            inviteCode: participant.invite_code,
+                            inviteCodeExpiration: participant.invite_code_exp,
+                            groupId: createGroupResult.wid._serialized,
+                            caption: comment
+                        });
+                    }, 2500);
+                    isInviteV4Sent &#x3D; true;
                 }
 
                 participantData[participantId] &#x3D; {
@@ -1239,6 +1282,27 @@ class Client extends EventEmitter {
     }
 
     /**
+     * 
+     * @param {string} groupId 
+     * @returns {Promise&amp;lt;Boolean&gt;}
+     */
+    async cancelGroupMembershipRequest(groupId) {
+        return await this.playPage.evaluate(async (groupId) &#x3D;&gt; {
+            try {
+                const groupWid &#x3D; window.WPP.whatsapp.WidFactory.createWid(groupId);
+                let data &#x3D; await window.Store.cancelMembershipApprovalRequest(
+                    groupWid,
+                    [window.WPP.whatsapp.UserPrefs.getMeUser()]
+                );
+                return data.name &#x3D;&#x3D;&#x3D; &#x27;CancelGroupMembershipRequestsResponseSuccess&#x27;;
+            } catch (e) {
+                if (e.name &#x3D;&#x3D;&#x3D; &#x27;ServerStatusCodeError&#x27;) return false;
+                throw e;
+            }
+        }, groupId);
+    }
+
+    /**
      * Setting  autoload download audio
      * @param {boolean} flag true/false
      */
@@ -1297,6 +1361,17 @@ class Client extends EventEmitter {
             return flag;
         }, flag);
     }
+
+    /**
+     * join as beta on WhatsApp Web
+     * @param {boolean} action true/false
+     * @returns 
+     */
+    async joinWebBeta(action &#x3D; true) {
+        return await this.playPage.evaluate(async (action) &#x3D;&gt; {
+            return await window.WPP.conn.joinWebBeta(action);
+        }, action);
+    }
 }
 
 module.exports &#x3D; Client;</code></pre>
@@ -1309,7 +1384,7 @@ module.exports &#x3D; Client;</code></pre>
   <footer id="jsdoc-footer" class="jsdoc-footer">
     <div id="jsdoc-footer-container">
       <p>
-        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.11 on December 8, 2023.
+        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.11 on March 22, 2024.
       </p>
     </div>
   </footer>

@@ -50,6 +50,14 @@ exports.StoreObject = () => {
         {
             id: 'PinUnpinMsg',
             conditions: (module) => module.sendPinInChatMsg && module
+        },
+        {
+            id: 'cancelMembershipApprovalRequest',
+            conditions: (module) => module?.cancelMembershipApprovalRequestJob || false
+        },
+        {
+            id: 'setGroupMemberAddMode',
+            conditions: (module) => module?.setGroupMemberAddMode || false
         }
     ];
 
@@ -147,7 +155,22 @@ exports.LoadUtils = () => {
         }
 
         if (options.mentionedJidList) {
-            options.mentionedJidList = options.mentionedJidList.map(cId => window.WPP.whatsapp.WidFactory.createWid(cId));
+            options.mentionedJidList = await Promise.all(
+                options.mentionedJidList.map(async (id) => {
+                    const wid = window.WPP.whatsapp.WidFactory.createWid(id);
+                    if (await window.WPP.contact.queryExists(id)) {
+                        return wid;
+                    }
+                })
+            );
+            options.mentionedJidList = options.mentionedJidList.filter(Boolean);
+        }
+
+        if (options.groupMentions) {
+            options.groupMentions = options.groupMentions.map((e) => ({
+                groupSubject: e.subject,
+                groupJid: window.WPP.whatsapp.WidFactory.createWid(e.id)
+            }));
         }
 
         let locationOptions = {};

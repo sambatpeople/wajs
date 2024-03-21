@@ -38,7 +38,7 @@ client.on('ready', () => {
     console.log('READY');
 });
 
-client.on('message', async msg => {
+client.on('message_create', async msg => {
     try {
         console.log('MESSAGE RECEIVED', msg);
         const quoted = msg.hasQuotedMsg ? (await msg.getQuotedMessage()) : msg;
@@ -59,7 +59,7 @@ client.on('message', async msg => {
 
         } else if (msg.body === '!ping') {
             // Send a new message to the same chat
-            client.sendMessage(msg.from, 'pong');
+            client.sendMessage(msg.id.remote, 'pong');
 
         } else if (msg.body.startsWith('!sendto ')) {
             // Direct send a new message to specific id
@@ -196,10 +196,10 @@ client.on('message', async msg => {
             }
         } else if (msg.body === '!chats') {
             const chats = await client.getChats();
-            client.sendMessage(msg.from, `The bot has ${chats.length} chats open.`);
+            client.sendMessage(msg.id.remote, `The bot has ${chats.length} chats open.`);
         } else if (msg.body === '!info') {
             let info = client.info;
-            client.sendMessage(msg.from, `
+            client.sendMessage(msg.id.remote, `
             *Connection info*
             User name: ${info.pushname}
             My number: ${info.wid.user}
@@ -227,21 +227,21 @@ client.on('message', async msg => {
             const quotedMsg = await msg.getQuotedMessage();
             if (quotedMsg.hasMedia) {
                 const attachmentData = await quotedMsg.downloadMedia();
-                client.sendMessage(msg.from, attachmentData, { caption: 'Here\'s your requested media.' });
+                client.sendMessage(msg.id.remote, attachmentData, { caption: 'Here\'s your requested media.' });
             }
             if (quotedMsg.hasMedia && quotedMsg.type === 'audio') {
                 const audio = await quotedMsg.downloadMedia();
-                await client.sendMessage(msg.from, audio, { sendAudioAsVoice: true });
+                await client.sendMessage(msg.id.remote, audio, { sendAudioAsVoice: true });
             }
         } else if (msg.body === '!sswa') {
             const media = await client.playPage.screenshot({ type: 'png', fullPage: true });
             const image = new MessageMedia('image/png', media.toString('base64'));
-            await client.sendMessage(msg.from, image);
+            await client.sendMessage(msg.id.remote, image);
         } else if (msg.body === '!isviewonce' && msg.hasQuotedMsg) {
             const quotedMsg = await msg.getQuotedMessage();
             if (quotedMsg.hasMedia) {
                 const media = await quotedMsg.downloadMedia();
-                await client.sendMessage(msg.from, media, { isViewOnce: true });
+                await client.sendMessage(msg.id.remote, media, { isViewOnce: true });
             }
         } else if (msg.body === '!location') {
             // only latitude and longitude
@@ -348,12 +348,12 @@ client.on('message', async msg => {
              * Presented an example for membership request approvals, the same examples are for the request rejections.
              * To approve the membership request from a specific user:
              */
-            await client.approveGroupMembershipRequests(msg.from, { requesterIds: 'number@c.us' });
+            await client.approveGroupMembershipRequests(msg.id.remote, { requesterIds: 'number@c.us' });
             /** The same for execution on group object (no need to provide the group ID): */
             const group = await msg.getChat();
             await group.approveGroupMembershipRequests({ requesterIds: 'number@c.us' });
             /** To approve several membership requests: */
-            const approval = await client.approveGroupMembershipRequests(msg.from, {
+            const approval = await client.approveGroupMembershipRequests(msg.id.remote, {
                 requesterIds: ['number1@c.us', 'number2@c.us']
             });
             /**
@@ -373,19 +373,19 @@ client.on('message', async msg => {
              */
             console.log(approval);
             /** To approve all the existing membership requests (simply don't provide any user IDs): */
-            await client.approveGroupMembershipRequests(msg.from);
+            await client.approveGroupMembershipRequests(msg.id.remote);
             /** To change the sleep value to 300 ms: */
-            await client.approveGroupMembershipRequests(msg.from, {
+            await client.approveGroupMembershipRequests(msg.id.remote, {
                 requesterIds: ['number1@c.us', 'number2@c.us'],
                 sleep: 300
             });
             /** To change the sleep value to random value between 100 and 300 ms: */
-            await client.approveGroupMembershipRequests(msg.from, {
+            await client.approveGroupMembershipRequests(msg.id.remote, {
                 requesterIds: ['number1@c.us', 'number2@c.us'],
                 sleep: [100, 300]
             });
             /** To explicitly disable the sleep: */
-            await client.approveGroupMembershipRequests(msg.from, {
+            await client.approveGroupMembershipRequests(msg.id.remote, {
                 requesterIds: ['number1@c.us', 'number2@c.us'],
                 sleep: null
             });

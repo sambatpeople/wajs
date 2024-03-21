@@ -186,14 +186,32 @@ class Message extends Base {
         } : undefined;
 
         /**
-         * Indicates the mentions in the message body.
-         * @type {Array<string>}
+         * @typedef {Object} Mention
+         * @property {string} server
+         * @property {string} user
+         * @property {string} _serialized
          */
-        this.mentionedIds = [];
 
-        if (data.mentionedJidList) {
-            this.mentionedIds = data.mentionedJidList;
-        }
+        /**
+         * Indicates the mentions in the message body.
+         * @type {Mention[]}
+         */
+        this.mentionedIds = data.mentionedJidList || [];
+
+        /**
+         * @typedef {Object} GroupMention
+         * @property {string} groupSubject The name  of the group
+         * @property {Object} groupJid The group ID
+         * @property {string} groupJid.server
+         * @property {string} groupJid.user
+         * @property {string} groupJid._serialized
+         */
+
+        /**
+         * Indicates whether there are group mentions in the message body
+         * @type {GroupMention[]}
+         */
+        this.groupMentions = data.groupMentions || [];
 
         /**
          * Order ID for message type ORDER
@@ -339,6 +357,14 @@ class Message extends Base {
      */
     async getMentions() {
         return await Promise.all(this.mentionedIds.map(async m => await this.client.getContactById(m)));
+    }
+
+    /**
+     * Returns groups mentioned in this message
+     * @returns {Promise<GroupChat[]|[]>}
+     */
+    async getGroupMentions() {
+        return await Promise.all(this.groupMentions.map(async (m) => await this.client.getChatById(m.groupJid._serialized)));
     }
 
     /**
@@ -584,12 +610,17 @@ class Message extends Base {
      * @returns {Promise<?Message>}
      */
     async edit(content, options = {}) {
-        if (Array.isArray(options.mentions) && options.mentions.length !== 0) {
-            options.mentions = options.mentions.map(v => typeof v === 'object' ? v.id._serialized : v);
+        if (options.mentions) {
+            !Array.isArray(options.mentions) && (options.mentions = [options.mentions]);
+            options.mentions = options.mentions.map((a) => typeof a === 'object' ? a.id._serialized : a);
         }
+
+        options.groupMentions && !Array.isArray(options.groupMentions) && (options.groupMentions = [options.groupMentions]);
+
         let internalOptions = {
             linkPreview: options.linkPreview === false ? undefined : true,
-            mentionedJidList: Array.isArray(options.mentions) ? options.mentions : [],
+            mentionedJidList: options.mentions || [],
+            groupMentions: options.groupMentions,
             extraOptions: options.extra
         };
 

@@ -200,9 +200,9 @@ class Client extends EventEmitter {
                 /** @type {GroupNotification} object does not provide enough information about this event, so a @type {Message} object is used. */
                 const message = new Message(this, msg);
 
-                const newId = isParticipant ? msg.recipients[0] : msg.to;
-                const oldId = isParticipant ? msg.author : msg.templateParams.find(id => id !== newId);
-
+                const newId = isParticipant ? msg.recipients[0]?._serialized || msg.recipients[0] : msg.to?._serialized || msg.to;
+                const oldId = isParticipant ? msg.author?._serialized || msg.author : msg.templateParams.find(id => id !== newId);
+  
                 /**
                  * Emitted when a contact or a group participant changes their phone number.
                  * @event Client#contact_changed
@@ -437,9 +437,9 @@ class Client extends EventEmitter {
          * Current connection information
          * @type {ClientInfo}
          */
-        this.info = new ClientInfo(this, await page.evaluate(() => {
-            const pushname = window.WPP.whatsapp.Conn.pushname;
-            const platform = window.WPP.whatsapp.Conn.platform;
+        this.info = new ClientInfo(this, await page.evaluate(async () => {
+            const pushname = await window.WPP.whatsapp.functions.getPushname();
+            const platform = window.WPP.conn.getPlatform();
             return { pushname, platform, wid: window.WPP.whatsapp.UserPrefs.getMeUser() };
         }));
 
@@ -497,6 +497,13 @@ class Client extends EventEmitter {
     }
 
     /**
+     * An object representing mentions of groups
+     * @typedef {Object} GroupMention
+     * @property {string} subject - The name of a group to mention (can be custom)
+     * @property {string} id - The group ID, e.g.: 'XXXXXXXXXX@g.us'
+     */
+
+    /**
      * Message options.
      * @typedef {Object} MessageSendOptions
      * @property {boolean} [linkPreview=true] - Show links preview. Has no effect on multi-device accounts.
@@ -508,7 +515,8 @@ class Client extends EventEmitter {
      * @property {boolean} [parseVCards=true] - Automatically parse vCards and send them as contacts
      * @property {string} [caption] - Image or video caption
      * @property {string} [quotedMessageId] - Id of the message that is being quoted (or replied to)
-     * @property {Contact[]} [mentions] - Contacts that are being mentioned in the message
+     * @property {GroupMention[]} [groupMentions] - An array of object that handle group mentions
+     * @property {string[]} [mentions] - User IDs to mention in the message
      * @property {boolean} [sendSeen=true] - Mark the conversation as seen after sending the message
      * @property {string} [stickerAuthor=undefined] - Sets the author of the sticker, (if sendMediaAsSticker is true).
      * @property {string} [stickerName=undefined] - Sets the name of the sticker, (if sendMediaAsSticker is true).
@@ -526,6 +534,13 @@ class Client extends EventEmitter {
      * @returns {Promise<Message>} Message that was just sent
      */
     async sendMessage(chatId, content, options = {}) {
+        if (options.mentions) {
+            !Array.isArray(options.mentions) && (options.mentions = [options.mentions]);
+            options.mentions = options.mentions.map((a) => typeof a === 'object' ? a.id._serialized : a);
+        }
+
+        options.groupMentions && !Array.isArray(options.groupMentions) && (options.groupMentions = [options.groupMentions]);
+
         let internalOptions = {
             linkPreview: options.linkPreview === false ? undefined : true,
             sendAudioAsVoice: options.sendAudioAsVoice,
@@ -535,7 +550,8 @@ class Client extends EventEmitter {
             caption: options.caption,
             quotedMessageId: options.quotedMessageId,
             parseVCards: options.parseVCards === false ? false : true,
-            mentionedJidList: Array.isArray(options.mentions) ? options.mentions.map(v => typeof v === 'object' ? v.id._serialized : v) : [],
+            mentionedJidList: options.mentions || [],
+            groupMentions: options.groupMentions,
             extraOptions: options.extra,
             messageId: options.messageId
         };
@@ -1030,13 +1046,14 @@ class Client extends EventEmitter {
                 const statusCode = participant.error ?? 200;
 
                 if (autoSendInviteV4 && statusCode === 403) {
-                    await Util.sleep(2500);
-                    await window.WPP.chat.sendGroupInviteMessage(participantId, {
-                        inviteCode: participant.invite_code,
-                        inviteCodeExpiration: participant.invite_code_exp,
-                        groupId: createGroupResult.wid._serialized,
-                        caption: comment
-                    });
+                    setTimeout(async () => {
+                        await window.WPP.chat.sendGroupInviteMessage(participantId, {
+                            inviteCode: participant.invite_code,
+                            inviteCodeExpiration: participant.invite_code_exp,
+                            groupId: createGroupResult.wid._serialized,
+                            caption: comment
+                        });
+                    }, 2500);
                     isInviteV4Sent = true;
                 }
 
@@ -1231,6 +1248,27 @@ class Client extends EventEmitter {
             const { requesterIds = null } = options;
             return await window.WPP.group.reject(groupId, requesterIds);
         }, { groupId, options });
+    }
+
+    /**
+     * 
+     * @param {string} groupId 
+     * @returns {Promise<Boolean>}
+     */
+    async cancelGroupMembershipRequest(groupId) {
+        return await this.playPage.evaluate(async (groupId) => {
+            try {
+                const groupWid = window.WPP.whatsapp.WidFactory.createWid(groupId);
+                let data = await window.Store.cancelMembershipApprovalRequest(
+                    groupWid,
+                    [window.WPP.whatsapp.UserPrefs.getMeUser()]
+                );
+                return data.name === 'CancelGroupMembershipRequestsResponseSuccess';
+            } catch (e) {
+                if (e.name === 'ServerStatusCodeError') return false;
+                throw e;
+            }
+        }, groupId);
     }
 
     /**

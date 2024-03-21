@@ -191,6 +191,9 @@ declare namespace WAJS {
         /** Rejects membership requests if any */
         rejectGroupMembershipRequests: (groupId: string, options: MembershipRequestActionOptions) => Promise<Array<MembershipRequestActionResult>>;
 
+        /** Cancels the membership request created by the current user to join a group */
+        cancelGroupMembershipRequest: (groupId: string) => Promise<boolean>
+
         /** Generic event */
         on(event: string, listener: (...args: any) => void): this
 
@@ -758,6 +761,15 @@ declare namespace WAJS {
         mediaKey?: string,
         /** Indicates the mentions in the message body. */
         mentionedIds: [],
+        /** Indicates whether there are group mentions in the message body */
+        groupMentions: {
+            groupSubject: string;
+            groupJid: {
+                server: string;
+                user: string;
+                _serialized: string;
+            };
+        }[],
         /** Unix timestamp for when the message was created */
         timestamp: number,
         /**
@@ -817,6 +829,8 @@ declare namespace WAJS {
         getContact: () => Promise<Contact>,
         /** Returns the Contacts mentioned in this message */
         getMentions: () => Promise<Contact[]>,
+        /** Returns groups mentioned in this message */
+        getGroupMentions: () => Promise<GroupChat[]|[]>,
         /** Returns the quoted message, if any */
         getQuotedMessage: () => Promise<Message>,
         /** 
@@ -941,6 +955,13 @@ declare namespace WAJS {
         quotedMessageId?: string
         /** Contacts that are being mentioned in the message */
         mentions?: Contact[]
+        /** An array of object that handle group mentions */
+        groupMentions?: {
+            /** The name of a group to mention (can be custom) */
+            subject: string,
+            /** The group ID, e.g.: 'XXXXXXXXXX@g.us' */
+            id: string
+        }[]
         /** Send 'seen' status */
         sendSeen?: boolean
         /** Media to be sent */
@@ -1426,6 +1447,8 @@ declare namespace WAJS {
          * @returns {Promise<boolean>} Returns true if the setting was properly updated. This can return false if the user does not have the necessary permissions.
          */
         setInfoAdminsOnly: (adminsOnly?: boolean) => Promise<boolean>;
+        /** Updates the group settings to only allow admins to add members. */
+        setAddMembersAdminsOnly: (adminsOnly?: boolean) => Promise<boolean>;
         /**
          * Gets an array of membership requests
          * @returns {Promise<Array<GroupMembershipRequest>>} An array of membership requests
@@ -1443,6 +1466,8 @@ declare namespace WAJS {
          * @returns {Promise<Array<MembershipRequestActionResult>>} Returns an array of requester IDs whose membership requests were rejected and an error for each requester, if any occurred during the operation. If there are no requests, an empty array will be returned
          */
         rejectGroupMembershipRequests: (options: MembershipRequestActionOptions) => Promise<Array<MembershipRequestActionResult>>;
+        /** Cancels the membership request created by the current user to join a group */
+        cancelGroupMembershipRequest: (groupId: string) => Promise<boolean>
         /** Gets the invite code for a specific group */
         getInviteCode: () => Promise<string>;
         /** Invalidates the current group invite code and generates a new one */

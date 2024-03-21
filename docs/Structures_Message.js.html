@@ -37,7 +37,6 @@ const MessageMedia &#x3D; require(&#x27;./MessageMedia&#x27;);
 const Order &#x3D; require(&#x27;./Order&#x27;);
 const Payment &#x3D; require(&#x27;./Payment&#x27;);
 const Reaction &#x3D; require(&#x27;./Reaction&#x27;);
-const Contact &#x3D; require(&#x27;./Contact&#x27;);
 const { MessageTypes } &#x3D; require(&#x27;../Util/Constant&#x27;);
 
 /**
@@ -52,7 +51,7 @@ class Message extends Base {
     }
 
     _patch(data) {
-        Object.defineProperty(this, &#x27;_data&#x27;, { value: data });
+        Object.defineProperty(this, &#x27;_data&#x27;, { value: data, writable: true });
 
         /**
          * MediaKey that represents the sticker &#x27;ID&#x27;
@@ -218,14 +217,32 @@ class Message extends Base {
         } : undefined;
 
         /**
-         * Indicates the mentions in the message body.
-         * @type {Array&amp;lt;string&gt;}
+         * @typedef {Object} Mention
+         * @property {string} server
+         * @property {string} user
+         * @property {string} _serialized
          */
-        this.mentionedIds &#x3D; [];
 
-        if (data.mentionedJidList) {
-            this.mentionedIds &#x3D; data.mentionedJidList;
-        }
+        /**
+         * Indicates the mentions in the message body.
+         * @type {Mention[]}
+         */
+        this.mentionedIds &#x3D; data.mentionedJidList || [];
+
+        /**
+         * @typedef {Object} GroupMention
+         * @property {string} groupSubject The name  of the group
+         * @property {Object} groupJid The group ID
+         * @property {string} groupJid.server
+         * @property {string} groupJid.user
+         * @property {string} groupJid._serialized
+         */
+
+        /**
+         * Indicates whether there are group mentions in the message body
+         * @type {GroupMention[]}
+         */
+        this.groupMentions &#x3D; data.groupMentions || [];
 
         /**
          * Order ID for message type ORDER
@@ -374,6 +391,14 @@ class Message extends Base {
     }
 
     /**
+     * Returns groups mentioned in this message
+     * @returns {Promise&amp;lt;GroupChat[]|[]&gt;}
+     */
+    async getGroupMentions() {
+        return await Promise.all(this.groupMentions.map(async (m) &#x3D;&gt; await this.client.getChatById(m.groupJid._serialized)));
+    }
+
+    /**
      * Returns the quoted message, if any
      * @returns {Promise&amp;lt;Message&gt;}
      */
@@ -457,30 +482,18 @@ class Message extends Base {
         }
 
         const result &#x3D; await this.client.playPage.evaluate(async (msgId) &#x3D;&gt; {
-            const msg &#x3D; window.WPP.whatsapp.MsgStore.get(msgId);
+            const msg &#x3D; await window.WPP.whatsapp.MsgStore.get(msgId);
             if (!msg) {
-                return undefined;
-            }
-            if (msg.mediaData.mediaStage !&#x3D; &#x27;RESOLVED&#x27;) {
-                // try to resolve media
-                await msg.downloadMedia({
-                    downloadEvenIfExpensive: true,
-                    rmrReason: 1
-                });
-            }
-
-            if (msg.mediaData.mediaStage.includes(&#x27;ERROR&#x27;) || msg.mediaData.mediaStage &#x3D;&#x3D;&#x3D; &#x27;FETCHING&#x27;) {
-                // media could not be downloaded
                 return undefined;
             }
 
             try {
-                const decryptedMedia &#x3D; await window.WPP.whatsapp.MediaBlobCache.get(msg.filehash);
+                const decryptedMedia &#x3D; await window.WPP.chat.downloadMedia(msgId);
 
-                const data &#x3D; await window.WAJS.arrayBufferToBase64Async(decryptedMedia);
+                const data &#x3D; await window.WPP.util.blobToBase64(decryptedMedia);
 
                 return {
-                    data,
+                    data: data.split(&#x27;,&#x27;)[1],
                     mimetype: msg.mimetype,
                     filename: msg.filename,
                     filesize: msg.size
@@ -502,7 +515,7 @@ class Message extends Base {
     async delete(everyone) {
         await this.client.playPage.evaluate(async ({ chatId, msgId, everyone }) &#x3D;&gt; {
             return await window.WPP.chat.deleteMessage(chatId, msgId, true, everyone);
-        }, { chatId: this.from, msgId: this.id._serialized, everyone });
+        }, { chatId: this._getChatId(), msgId: this.id._serialized, everyone });
     }
 
     /**
@@ -628,12 +641,17 @@ class Message extends Base {
      * @returns {Promise&amp;lt;?Message&gt;}
      */
     async edit(content, options &#x3D; {}) {
-        if (options.mentions &amp;amp;&amp;amp; options.mentions.some(possiblyContact &#x3D;&gt; possiblyContact instanceof Contact)) {
-            options.mentions &#x3D; options.mentions.map(a &#x3D;&gt; a.id._serialized);
+        if (options.mentions) {
+            !Array.isArray(options.mentions) &amp;amp;&amp;amp; (options.mentions &#x3D; [options.mentions]);
+            options.mentions &#x3D; options.mentions.map((a) &#x3D;&gt; typeof a &#x3D;&#x3D;&#x3D; &#x27;object&#x27; ? a.id._serialized : a);
         }
+
+        options.groupMentions &amp;amp;&amp;amp; !Array.isArray(options.groupMentions) &amp;amp;&amp;amp; (options.groupMentions &#x3D; [options.groupMentions]);
+
         let internalOptions &#x3D; {
             linkPreview: options.linkPreview &#x3D;&#x3D;&#x3D; false ? undefined : true,
-            mentionedJidList: Array.isArray(options.mentions) ? options.mentions : [],
+            mentionedJidList: options.mentions || [],
+            groupMentions: options.groupMentions,
             extraOptions: options.extra
         };
 
@@ -648,6 +666,35 @@ class Message extends Base {
         }
         return null;
     }
+
+    /**
+     * It is used to pin a message
+     * @param {Number} duration duration as seconds
+     * @returns {Promise&amp;lt;Boolean&gt;} returns a boolean result, true if successful and false if failed.
+     */
+    async pin(duration) {
+        return await this.client.playPage.evaluate(async ({ msgId, duration }) &#x3D;&gt; {
+            const message &#x3D; window.WPP.whatsapp.MsgStore.get(msgId);
+            if (!message) return false;
+            const response &#x3D; await window.Store.PinUnpinMsg.sendPinInChatMsg(message, 1, duration);
+            if (response.messageSendResult &#x3D;&#x3D;&#x3D; &#x27;OK&#x27;) return true;
+            return false;
+        }, { msgId: this.id._serialized, duration });
+    }
+
+    /**
+     * It is used to unpin a message
+     * @returns {Promise&amp;lt;Boolean&gt;} returns a boolean result, true if successful and false if failed.
+     */
+    async unpin() {
+        return await this.client.playPage.evaluate(async (msgId) &#x3D;&gt; {
+            const message &#x3D; window.WPP.whatsapp.MsgStore.get(msgId);
+            if (!message) return false;
+            const response &#x3D; await window.Store.PinUnpinMsg.sendPinInChatMsg(message, 2);
+            if (response.messageSendResult &#x3D;&#x3D;&#x3D; &#x27;OK&#x27;) return true;
+            return false;
+        }, this.id._serialized);
+    }
 }
 
 module.exports &#x3D; Message;
@@ -661,7 +708,7 @@ module.exports &#x3D; Message;
   <footer id="jsdoc-footer" class="jsdoc-footer">
     <div id="jsdoc-footer-container">
       <p>
-        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.11 on December 8, 2023.
+        Generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc</a> 3.6.11 on March 22, 2024.
       </p>
     </div>
   </footer>

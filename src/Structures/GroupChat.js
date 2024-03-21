@@ -216,6 +216,29 @@ class GroupChat extends Chat {
     }
 
     /**
+     * Updates the group settings to only allow admins to add members.
+     * @param {boolean} [adminsOnly=true] Enable or disable this option 
+     * @returns {Promise<boolean>} Returns true if the setting was properly updated. This can return false if the user does not have the necessary permissions.
+     */
+    async setAddMembersAdminsOnly(adminsOnly = true) {
+        const success = await this.client.playPage.evaluate(async ({ chatId, adminsOnly }) => {
+            const chatWid = window.WPP.whatsapp.WidFactory.createWid(chatId);
+            try {
+                await window.Store.setGroupMemberAddMode(chatWid, 'member_add_mode', adminsOnly ? 0 : 1);
+                return true;
+            } catch (err) {
+                if(err.name === 'ServerStatusCodeError') return false;
+                throw err;
+            }
+        }, { chatId: this.id._serialized, adminsOnly });
+
+        if(!success) return false;
+
+        this.groupMetadata.memberAddMode = adminsOnly ? 'admin_add' : 'all_member_add';
+        return true;
+    }
+
+    /**
      * Deletes the group's picture.
      * @returns {Promise<boolean>} Returns true if the picture was properly deleted. This can return false if the user does not have the necessary permissions.
      */
@@ -314,6 +337,14 @@ class GroupChat extends Chat {
      */
     async rejectGroupMembershipRequests(options = {}) {
         return await this.client.rejectGroupMembershipRequests(this.id._serialized, options);
+    }
+
+    /**
+     * Cancels the membership request created by the current user to join a group
+     * @returns {Promise<boolean>} Returns true if the operation completed successfully, false otherwise
+     */
+    async cancelGroupMembershipRequest() {
+        return await this.client.cancelGroupMembershipRequest(this.id._serialized);
     }
 
     /**

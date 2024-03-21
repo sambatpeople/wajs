@@ -6,6 +6,11 @@ const playwright = require('playwright');
 const { WhatsWebURL } = require('./Constant');
 const { LoadUtils, StoreObject } = require('./Injected');
 
+/**
+ * 
+ * @param {import('playwright').Page} page 
+ * @param {String} version 
+ */
 async function preparePage(page, version) {
     page.route('https://web.whatsapp.com/**', (route) => {
         if (route.request().url() === WhatsWebURL) {
@@ -50,7 +55,7 @@ async function preparePage(page, version) {
 
 async function getPage(options = {}) {
     const browserName = options.browser || 'chromium';
-    const WWebVersion = options.version || waVersion.getLatestVersion();
+    const WWebVersion = options.version || await waVersion.fetchCurrentVersion();
 
     let browser;
     let page;

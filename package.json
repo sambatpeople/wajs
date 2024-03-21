@@ -29,7 +29,7 @@
   "homepage": "https://github.com/DikaArdnt/wajs/",
   "dependencies": {
     "@wppconnect/wa-js": "github:wppconnect-team/wa-js",
-    "@wppconnect/wa-version": "^1.2.160",
+    "@wppconnect/wa-version": "latest",
     "axios": "^1.6.2",
     "fluent-ffmpeg": "^2.1.2",
     "node-webpmux": "^3.1.0",
