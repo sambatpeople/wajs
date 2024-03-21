@@ -33,7 +33,7 @@ Please note that Node v12+ is required.
 ## Example usage
 
 ```js
-const { Client } = require('wajs');
+const { Client } = require('@dikaardnt/wajs');
 
 const client = new Client();
 
