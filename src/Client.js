@@ -852,7 +852,18 @@ class Client extends EventEmitter {
             await window.WPP.chat.unmute(chatId);
         }, chatId);
     }
+    
+    /**
+     * Clears the chat history.
+     *
+     * @param {string} chatId The ID of the chat to be cleared.
+     */
 
+    async clearMessage(chatId) {
+        await this.playPage.evaluate(async chatId => {
+            await window.WPP.chat.clear(chatId);
+        }, chatId);
+    }
     /**
     * Mark the Chat as unread
     * @param {string} chatId ID of the chat that will be marked as unread
