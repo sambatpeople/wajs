@@ -863,6 +863,18 @@ class Client extends EventEmitter {
         }, chatId);
     }
 
+   /**
+     * Clears the chat history.
+     *
+     * @param {string} chatId The ID of the chat to be cleared.
+     */
+
+    async clearMessage(chatId) {
+        await this.playPage.evaluate(async chatId => {
+            await window.WPP.chat.clear(chatId);
+        }, chatId);
+    }
+    
     /**
      * Returns the contact ID's profile picture URL, if privacy settings allow it
      * @param {string} contactId the whatsapp user's ID
